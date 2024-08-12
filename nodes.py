@@ -15,6 +15,7 @@ from pathlib import Path
 #workaround for unnecessary flash_attn requirement
 from unittest.mock import patch
 from transformers.dynamic_module_utils import get_imports
+cache_dir = "/stable-diffusion-cache/models/LLM"
 
 def fixed_get_imports(filename: str | os.PathLike) -> list[str]:
     if not str(filename).endswith("modeling_florence2.py"):
@@ -79,11 +80,14 @@ class DownloadAndLoadFlorence2Model:
         model_path = os.path.join(folder_paths.models_dir, "LLM", model_name)
         
         if not os.path.exists(model_path):
-            print(f"Downloading Florence2 model to: {model_path}")
-            from huggingface_hub import snapshot_download
-            snapshot_download(repo_id=model,
-                            local_dir=model_path,
-                            local_dir_use_symlinks=False)
+            if os.path.exists(os.path.join(cache_dir, model_name)):
+                model_path = os.path.join(cache_dir, model_name)
+            else:
+                print(f"Downloading Florence2 model to: {model_path}")
+                from huggingface_hub import snapshot_download
+                snapshot_download(repo_id=model,
+                                local_dir=model_path,
+                                local_dir_use_symlinks=False)
             
         print(f"using {attention} for attention")
         with patch("transformers.dynamic_module_utils.get_imports", fixed_get_imports): #workaround for unnecessary flash_attn requirement
