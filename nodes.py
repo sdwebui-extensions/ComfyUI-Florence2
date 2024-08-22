@@ -13,11 +13,10 @@ import re
 from pathlib import Path
 
 #workaround for unnecessary flash_attn requirement
-from unittest.mock import patch
-from transformers.dynamic_module_utils import get_imports
 cache_dir = "/stable-diffusion-cache/models/LLM"
 
 def fixed_get_imports(filename: str | os.PathLike) -> list[str]:
+    from transformers.dynamic_module_utils import get_imports
     if not str(filename).endswith("modeling_florence2.py"):
         return get_imports(filename)
     imports = get_imports(filename)
@@ -72,6 +71,7 @@ class DownloadAndLoadFlorence2Model:
     CATEGORY = "Florence2"
 
     def loadmodel(self, model, precision, attention, lora=None):
+        from unittest.mock import patch
         device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
@@ -161,6 +161,7 @@ class Florence2ModelLoader:
     CATEGORY = "Florence2"
 
     def loadmodel(self, model, precision, attention, lora=None):
+        from unittest.mock import patch
         device = mm.get_torch_device()
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
         model_path = Path(folder_paths.models_dir, "LLM", model)
