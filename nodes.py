@@ -16,11 +16,14 @@ from pathlib import Path
 cache_dir = "/stable-diffusion-cache/models/LLM"
 
 def fixed_get_imports(filename: str | os.PathLike) -> list[str]:
-    from transformers.dynamic_module_utils import get_imports
-    if not str(filename).endswith("modeling_florence2.py"):
-        return get_imports(filename)
-    imports = get_imports(filename)
-    imports.remove("flash_attn")
+    try:
+        if not str(filename).endswith("modeling_florence2.py"):
+            return get_imports(filename)
+        imports = get_imports(filename)
+        imports.remove("flash_attn")
+    except:
+        print(f"No flash_attn import to remove")
+        pass
     return imports
 
 
@@ -44,8 +47,11 @@ class DownloadAndLoadFlorence2Model:
                     'microsoft/Florence-2-large-ft',
                     'HuggingFaceM4/Florence-2-DocVQA',
                     'thwri/CogFlorence-2.1-Large',
+                    'thwri/CogFlorence-2.2-Large',
                     'gokaygokay/Florence-2-SD3-Captioner',
-                    'MiaoshouAI/Florence-2-base-PromptGen'
+                    'gokaygokay/Florence-2-Flux-Large',
+                    'MiaoshouAI/Florence-2-base-PromptGen-v1.5',
+                    'MiaoshouAI/Florence-2-large-PromptGen-v1.5'
                     ],
                     {
                     "default": 'microsoft/Florence-2-base'
@@ -142,7 +148,7 @@ class Florence2ModelLoader:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-            "model": ([item.name for item in Path(folder_paths.models_dir, "LLM").iterdir() if item.is_dir()],),
+            "model": ([item.name for item in Path(folder_paths.models_dir, "LLM").iterdir() if item.is_dir()], {"tooltip": "models are expected to be in Comfyui/models/LLM folder"}),
             "precision": (['fp16','bf16','fp32'],),
             "attention": (
                     [ 'flash_attention_2', 'sdpa', 'eager'],
@@ -205,7 +211,8 @@ class Florence2Run:
                     'ocr',
                     'ocr_with_region',
                     'docvqa',
-                    'prompt_gen'
+                    'prompt_gen_tags',
+                    'prompt_gen_mixed_caption'
                     ],
                    ),
                 "fill_mask": ("BOOLEAN", {"default": True}),
@@ -266,7 +273,8 @@ class Florence2Run:
             'ocr': '<OCR>',
             'ocr_with_region': '<OCR_WITH_REGION>',
             'docvqa': '<DocVQA>',
-            'prompt_gen': '<GENERATE_PROMPT>',
+            'prompt_gen_tags': '<GENERATE_TAGS>',
+            'prompt_gen_mixed_caption': '<MIXED_CAPTION>'
         }
         task_prompt = prompts.get(task, '<OD>')
 
@@ -475,26 +483,54 @@ class Florence2Run:
                     font = ImageFont.load_default()
                 predictions = parsed_answer[task_prompt]
                 scale = 1
-                draw = ImageDraw.Draw(image_pil)
+                image_pil = image_pil.convert('RGBA')
+                overlay = Image.new('RGBA', image_pil.size, (255, 255, 255, 0))
+                draw = ImageDraw.Draw(overlay)
                 bboxes, labels = predictions['quad_boxes'], predictions['labels']
                 
+                # Create a new black image for the mask
+                mask_image = Image.new('RGB', (W, H), 'black')
+                mask_draw = ImageDraw.Draw(mask_image)
+                
                 for box, label in zip(bboxes, labels):
-                    scaled_box = [ v / (width if idx % 2 == 0 else height) for idx, v in enumerate(box)]
+                    scaled_box = [v / (width if idx % 2 == 0 else height) for idx, v in enumerate(box)]
                     out_data.append({"label": label, "box": scaled_box})
                     
                     color = random.choice(colormap)
                     new_box = (np.array(box) * scale).tolist()
-                    draw.polygon(new_box, width=3, outline=color)
-                    draw.text((new_box[0]+8, new_box[1]+2),
-                                "{}".format(label),
-                                align="right",
-                                font=font,
-                                fill=color)
                     
+                    if fill_mask:
+                        color_with_opacity = ImageColor.getrgb(color) + (180,)
+                        draw.polygon(new_box, outline=color, fill=color_with_opacity, width=3)
+                    else:
+                        draw.polygon(new_box, outline=color, width=3)
+                    
+                    draw.text((new_box[0]+8, new_box[1]+2),
+                              "{}".format(label),
+                              align="right",
+                              font=font,
+                              fill=color)
+                    
+                    # Draw the mask
+                    mask_draw.polygon(new_box, outline="white", fill="white")
+                
+                image_pil = Image.alpha_composite(image_pil, overlay)
+                image_pil = image_pil.convert('RGB')
+                
                 image_tensor = F.to_tensor(image_pil)
                 image_tensor = image_tensor[:3, :, :].unsqueeze(0).permute(0, 2, 3, 1).cpu().float()
                 out.append(image_tensor)
 
+                # Process the mask
+                mask_tensor = F.to_tensor(mask_image)
+                mask_tensor = mask_tensor.unsqueeze(0).permute(0, 2, 3, 1).cpu().float()
+                mask_tensor = mask_tensor.mean(dim=0, keepdim=True)
+                mask_tensor = mask_tensor.repeat(1, 1, 1, 3)
+                mask_tensor = mask_tensor[:, :, :, 0]
+                out_masks.append(mask_tensor)
+
+                pbar.update(1)
+            
             elif task == 'docvqa':
                 if text_input == "":
                     raise ValueError("Text input (prompt) is required for 'docvqa'")
