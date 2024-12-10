@@ -51,7 +51,9 @@ class DownloadAndLoadFlorence2Model:
                     'gokaygokay/Florence-2-SD3-Captioner',
                     'gokaygokay/Florence-2-Flux-Large',
                     'MiaoshouAI/Florence-2-base-PromptGen-v1.5',
-                    'MiaoshouAI/Florence-2-large-PromptGen-v1.5'
+                    'MiaoshouAI/Florence-2-large-PromptGen-v1.5',
+                    'MiaoshouAI/Florence-2-base-PromptGen-v2.0',
+                    'MiaoshouAI/Florence-2-large-PromptGen-v2.0'
                     ],
                     {
                     "default": 'microsoft/Florence-2-base'
@@ -212,7 +214,9 @@ class Florence2Run:
                     'ocr_with_region',
                     'docvqa',
                     'prompt_gen_tags',
-                    'prompt_gen_mixed_caption'
+                    'prompt_gen_mixed_caption',
+                    'prompt_gen_analyze',
+                    'prompt_gen_mixed_caption_plus',
                     ],
                    ),
                 "fill_mask": ("BOOLEAN", {"default": True}),
@@ -274,7 +278,9 @@ class Florence2Run:
             'ocr_with_region': '<OCR_WITH_REGION>',
             'docvqa': '<DocVQA>',
             'prompt_gen_tags': '<GENERATE_TAGS>',
-            'prompt_gen_mixed_caption': '<MIXED_CAPTION>'
+            'prompt_gen_mixed_caption': '<MIXED_CAPTION>',
+            'prompt_gen_analyze': '<ANALYZE>',
+            'prompt_gen_mixed_caption_plus': '<MIXED_CAPTION_PLUS>',
         }
         task_prompt = prompts.get(task, '<OD>')
 
