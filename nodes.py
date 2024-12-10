@@ -13,9 +13,12 @@ import re
 from pathlib import Path
 
 #workaround for unnecessary flash_attn requirement
+from unittest.mock import patch
+from transformers.dynamic_module_utils import get_imports
 cache_dir = "/stable-diffusion-cache/models/LLM"
 
 def fixed_get_imports(filename: str | os.PathLike) -> list[str]:
+    imports = []
     try:
         if not str(filename).endswith("modeling_florence2.py"):
             return get_imports(filename)
