@@ -35,6 +35,8 @@ from comfy.utils import ProgressBar
 import folder_paths
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
+model_directory = os.path.join(folder_paths.models_dir, "LLM")
+os.makedirs(model_directory, exist_ok=True)
 
 from transformers import AutoModelForCausalLM, AutoProcessor, set_seed
 
@@ -88,7 +90,7 @@ class DownloadAndLoadFlorence2Model:
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
 
         model_name = model.rsplit('/', 1)[-1]
-        model_path = os.path.join(folder_paths.models_dir, "LLM", model_name)
+        model_path = os.path.join(model_directory, model_name)
         
         if not os.path.exists(model_path):
             if os.path.exists(os.path.join(cache_dir, model_name)):
@@ -100,7 +102,7 @@ class DownloadAndLoadFlorence2Model:
                                 local_dir=model_path,
                                 local_dir_use_symlinks=False)
             
-        print(f"using {attention} for attention")
+        print(f"Florence2 using {attention} for attention")
         with patch("transformers.dynamic_module_utils.get_imports", fixed_get_imports): #workaround for unnecessary flash_attn requirement
             model = AutoModelForCausalLM.from_pretrained(model_path, attn_implementation=attention, device_map=device, torch_dtype=dtype,trust_remote_code=True)
         processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
@@ -138,7 +140,7 @@ class DownloadAndLoadFlorence2Lora:
 
     def loadmodel(self, model):
         model_name = model.rsplit('/', 1)[-1]
-        model_path = os.path.join(folder_paths.models_dir, "LLM", model_name)
+        model_path = os.path.join(model_directory, model_name)
         
         if not os.path.exists(model_path):
             if os.path.exists(os.path.join(cache_dir, model_name)):
@@ -180,7 +182,7 @@ class Florence2ModelLoader:
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
         model_path = Path(folder_paths.models_dir, "LLM", model)
         print(f"Loading model from {model_path}")
-        print(f"using {attention} for attention")
+        print(f"Florence2 using {attention} for attention")
         with patch("transformers.dynamic_module_utils.get_imports", fixed_get_imports): #workaround for unnecessary flash_attn requirement
             model = AutoModelForCausalLM.from_pretrained(model_path, attn_implementation=attention, device_map=device, torch_dtype=dtype,trust_remote_code=True)
         processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
