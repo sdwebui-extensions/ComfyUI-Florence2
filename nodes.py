@@ -1,3 +1,4 @@
+from collections.abc import Callable
 import torch
 import torchvision.transforms.functional as F
 import io
@@ -17,6 +18,8 @@ from unittest.mock import patch
 from transformers.dynamic_module_utils import get_imports
 cache_dir = "/stable-diffusion-cache/models/LLM"
 
+from safetensors.torch import load_file, save_file, save_model
+
 def fixed_get_imports(filename: str | os.PathLike) -> list[str]:
     imports = []
     try:
@@ -30,6 +33,27 @@ def fixed_get_imports(filename: str | os.PathLike) -> list[str]:
     return imports
 
 
+def create_path_dict(paths: list[str], predicate: Callable[[Path], bool] = lambda _: True) -> dict[str, str]:
+    """
+    Creates a flat dictionary of the contents of all given paths: ``{name: absolute_path}``.
+
+    Non-recursive.  Optionally takes a predicate to filter items.  Duplicate names overwrite (the last one wins).
+
+    Args:
+        paths (list[str]):
+            The paths to search for items.
+        predicate (Callable[[Path], bool]): 
+            (Optional) If provided, each path is tested against this filter.
+            Returns ``True`` to include a path.
+
+            Default: Include everything
+    """
+
+    flattened_paths = [item for path in paths if Path(path).exists() for item in Path(path).iterdir() if predicate(item)]
+
+    return {item.name: str(item.absolute()) for item in flattened_paths}
+
+
 import comfy.model_management as mm
 from comfy.utils import ProgressBar
 import folder_paths
@@ -37,6 +61,9 @@ import folder_paths
 script_directory = os.path.dirname(os.path.abspath(__file__))
 model_directory = os.path.join(folder_paths.models_dir, "LLM")
 os.makedirs(model_directory, exist_ok=True)
+
+# Ensure ComfyUI knows about the LLM model path
+folder_paths.add_model_folder_path("LLM", model_directory)
 
 from transformers import AutoModelForCausalLM, AutoProcessor, set_seed
 
@@ -75,6 +102,7 @@ class DownloadAndLoadFlorence2Model:
             },
             "optional": {
                 "lora": ("PEFTLORA",),
+                "convert_to_safetensors": ("BOOLEAN", {"default": False, "tooltip": "Some of the older model weights are not saved in .safetensors format, which seem to cause longer loading times, this option converts the .bin weights to .safetensors"}),
             }
         }
 
@@ -83,7 +111,7 @@ class DownloadAndLoadFlorence2Model:
     FUNCTION = "loadmodel"
     CATEGORY = "Florence2"
 
-    def loadmodel(self, model, precision, attention, lora=None):
+    def loadmodel(self, model, precision, attention, lora=None, convert_to_safetensors=False):
         from unittest.mock import patch
         device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
@@ -103,8 +131,25 @@ class DownloadAndLoadFlorence2Model:
                                 local_dir_use_symlinks=False)
             
         print(f"Florence2 using {attention} for attention")
+        
+        if convert_to_safetensors:
+            model_weight_path = os.path.join(model_path, 'pytorch_model.bin')
+            if os.path.exists(model_weight_path):
+                safetensors_weight_path = os.path.join(model_path, 'model.safetensors')
+                print(f"Converting {model_weight_path} to {safetensors_weight_path}")
+                if not os.path.exists(safetensors_weight_path):
+                    sd = torch.load(model_weight_path, map_location=offload_device)
+                    sd_new = {}
+                    for k, v in sd.items():
+                        sd_new[k] = v.clone()
+                    save_file(sd_new, safetensors_weight_path)
+                    if os.path.exists(safetensors_weight_path):
+                        print(f"Conversion successful. Deleting original file: {model_weight_path}")
+                        os.remove(model_weight_path)
+                        print(f"Original {model_weight_path} file deleted.")
+            
         with patch("transformers.dynamic_module_utils.get_imports", fixed_get_imports): #workaround for unnecessary flash_attn requirement
-            model = AutoModelForCausalLM.from_pretrained(model_path, attn_implementation=attention, device_map=device, torch_dtype=dtype,trust_remote_code=True)
+            model = AutoModelForCausalLM.from_pretrained(model_path, attn_implementation=attention, torch_dtype=dtype,trust_remote_code=True).to(offload_device)
         processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
 
         if lora is not None:
@@ -157,8 +202,11 @@ class Florence2ModelLoader:
 
     @classmethod
     def INPUT_TYPES(s):
+        all_llm_paths = folder_paths.get_folder_paths("LLM")
+        s.model_paths = create_path_dict(all_llm_paths, lambda x: x.is_dir())
+
         return {"required": {
-            "model": ([item.name for item in Path(folder_paths.models_dir, "LLM").iterdir() if item.is_dir()], {"tooltip": "models are expected to be in Comfyui/models/LLM folder"}),
+            "model": ([*s.model_paths], {"tooltip": "models are expected to be in Comfyui/models/LLM folder"}),
             "precision": (['fp16','bf16','fp32'],),
             "attention": (
                     [ 'flash_attention_2', 'sdpa', 'eager'],
@@ -168,6 +216,7 @@ class Florence2ModelLoader:
             },
             "optional": {
                 "lora": ("PEFTLORA",),
+                "convert_to_safetensors": ("BOOLEAN", {"default": False, "tooltip": "Some of the older model weights are not saved in .safetensors format, which seem to cause longer loading times, this option converts the .bin weights to .safetensors"}),
             }
         }
 
@@ -176,15 +225,31 @@ class Florence2ModelLoader:
     FUNCTION = "loadmodel"
     CATEGORY = "Florence2"
 
-    def loadmodel(self, model, precision, attention, lora=None):
+    def loadmodel(self, model, precision, attention, lora=None, convert_to_safetensors=False):
         from unittest.mock import patch
         device = mm.get_torch_device()
+        offload_device = mm.unet_offload_device()
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
-        model_path = Path(folder_paths.models_dir, "LLM", model)
+        model_path = Florence2ModelLoader.model_paths.get(model)
         print(f"Loading model from {model_path}")
         print(f"Florence2 using {attention} for attention")
+        if convert_to_safetensors:
+            model_weight_path = os.path.join(model_path, 'pytorch_model.bin')
+            if os.path.exists(model_weight_path):
+                safetensors_weight_path = os.path.join(model_path, 'model.safetensors')
+                print(f"Converting {model_weight_path} to {safetensors_weight_path}")
+                if not os.path.exists(safetensors_weight_path):
+                    sd = torch.load(model_weight_path, map_location=offload_device)
+                    sd_new = {}
+                    for k, v in sd.items():
+                        sd_new[k] = v.clone()
+                    save_file(sd_new, safetensors_weight_path)
+                    if os.path.exists(safetensors_weight_path):
+                        print(f"Conversion successful. Deleting original file: {model_weight_path}")
+                        os.remove(model_weight_path)
+                        print(f"Original {model_weight_path} file deleted.")
         with patch("transformers.dynamic_module_utils.get_imports", fixed_get_imports): #workaround for unnecessary flash_attn requirement
-            model = AutoModelForCausalLM.from_pretrained(model_path, attn_implementation=attention, device_map=device, torch_dtype=dtype,trust_remote_code=True)
+            model = AutoModelForCausalLM.from_pretrained(model_path, attn_implementation=attention, torch_dtype=dtype,trust_remote_code=True).to(offload_device)
         processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
 
         if lora is not None:
@@ -436,7 +501,10 @@ class Florence2Run:
                 out_tensor = annotated_image_tensor[:3, :, :].unsqueeze(0).permute(0, 2, 3, 1).cpu().float()
                 out.append(out_tensor)
                
-                out_data.append(bboxes)
+                if task == 'caption_to_phrase_grounding':
+                    out_data.append(parsed_answer[task_prompt])
+                else:
+                    out_data.append(bboxes)
 
                 
                 pbar.update(1)
