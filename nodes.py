@@ -16,7 +16,8 @@ from pathlib import Path
 #workaround for unnecessary flash_attn requirement
 from unittest.mock import patch
 from transformers.dynamic_module_utils import get_imports
-cache_dir = "/stable-diffusion-cache/models/LLM"
+from comfy.cli_args import args
+cache_dir = os.path.join(args.cache_root, "models/LLM")
 
 import transformers
 
